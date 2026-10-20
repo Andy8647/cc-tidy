@@ -59,6 +59,9 @@ function fit(spans: Span[], width: number): Span[] {
   return [...out, { text: '…', dim: true }, { text: ' '.repeat(left) }]
 }
 
+/** The hover group every border button is in: it lights nothing, it only turns inversion off. */
+const BORDER_SCOPE = 'cc-tidy-border'
+
 const toText = (kit: Kit, span: Span) =>
   kit.Text({
     ...(span.color === undefined ? {} : { color: span.color }),
@@ -79,19 +82,35 @@ const toText = (kit: Kit, span: Span) =>
  */
 export function drawTextBox(kit: Kit, key: string, width: number, border: string, rows: Row[], onPress: () => void): RenderElement {
   const inner = Math.max(4, width - 4)
-  const line = (index: number, spans: Span[]) =>
-    kit.Button({ key: key + ':' + index, plain: true, onPress, children: spans.map(span => toText(kit, span)) })
-  const edge = (left: string, right: string) => [{ text: left + '─'.repeat(inner + 2) + right, color: border }]
+  const button = (id: string, spans: Span[], lights: boolean) =>
+    kit.Button({
+      key: key + ':' + id,
+      plain: true,
+      onPress,
+      // A plain Button inverts under the pointer; its hover overrides come
+      // after that, so `inverse: false` keeps the border from lighting up.
+      ...(lights ? {} : { hover: { scope: BORDER_SCOPE, inverse: false } }),
+      children: spans.map(span => toText(kit, span)),
+    })
+  const edge = (id: string, left: string, right: string) =>
+    button(id, [{ text: left + '─'.repeat(inner + 2) + right, color: border }], false)
   return kit.Box({
     flexDirection: 'column',
     children: [
-      line(0, edge('╭', '╮')),
+      edge('top', '╭', '╮'),
       ...rows.map((row, i) => {
         const right = row.right ?? []
         const room = Math.max(1, inner - right.reduce((n, span) => n + textWidth(span.text), 0))
-        return line(i + 1, [{ text: '│ ', color: border }, ...fit(row.left, room), ...right, { text: ' │', color: border }])
+        return kit.Box({
+          flexDirection: 'row',
+          children: [
+            button(i + ':l', [{ text: '│ ', color: border }], false),
+            button(i + ':c', [...fit(row.left, room), ...right], true),
+            button(i + ':r', [{ text: ' │', color: border }], false),
+          ],
+        })
       }),
-      line(rows.length + 1, edge('╰', '╯')),
+      edge('bottom', '╰', '╯'),
     ],
   })
 }
