@@ -77,7 +77,7 @@ async function groupOf($: EngineInterface, id: string) {
 function summarySpans(group: Group, isOpen: boolean) {
   const counts = new Map<string, number>()
   for (const call of group.calls) counts.set(call.tool, (counts.get(call.tool) ?? 0) + 1)
-  const kinds = [...counts].map(([tool, n]) => iconOf(tool) + shortName(tool) + '×' + n).join('  ')
+  const kinds = [...counts].map(([tool, n]) => iconOf(tool) + ' ' + shortName(tool) + '×' + n).join('  ')
   const failed = group.calls.filter(call => call.isError).length
   const timed = group.calls.map(call => durationOf(call.id)).filter((ms): ms is number => ms !== undefined)
   const n = group.calls.length

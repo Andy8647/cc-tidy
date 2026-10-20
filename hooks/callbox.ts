@@ -182,7 +182,8 @@ export function drawCallBox(kit: Kit, call: Call, width: number, isFull: boolean
   const header: Row = {
     left: [
       { text: status.mark + ' ', color: status.color },
-      { text: iconOf(call.tool) + shortName(call.tool) + ' ', color: PI.toolTitle },
+      // The space lets Ghostty draw the icon two cells wide, as pi-tidy's are.
+      { text: iconOf(call.tool) + ' ' + shortName(call.tool) + ' ', color: PI.toolTitle },
       ...spans,
     ],
     right,
