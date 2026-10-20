@@ -4,7 +4,7 @@ import type { ElementTable, On, RenderElement } from 'claude-code'
 const open = new Set<string>()
 
 /** Output lines a folded box keeps, and the most an open one draws. */
-const FOLDED_LINES = 1
+const FOLDED_LINES = 3
 const OPEN_LINES = 200
 
 /** fa-terminal, pi-tidy's bash icon (a Nerd Font glyph). */
@@ -27,14 +27,14 @@ const lines = (text: string) => {
  * how the call went: grey while it runs, red when it failed, green otherwise.
  *
  * The box is the call's `ToolUse` row; its `ToolResult` draws nothing, as
- * the box already holds what it would. The ctrl+o transcript keeps Claude
- * Code's own drawing.
+ * the box already holds what it would. Expanded, it shows all its output.
  */
 export function registerBashBox(on: On) {
   on('ui.render', { component: 'ToolUse', props: { tool: 'Bash' } }, async ($, e, next) => {
-    if (e.props.isExpanded === true || !isRecord(e.props.input)) return next(e)
+    if (!isRecord(e.props.input)) return next(e)
     const { tool_use_id: id } = e.props
-    return drawBashBox($.ui.resolve(e), e.props, open.has(id), () => {
+    // Expanded (ctrl+o, or a click Claude Code took): the box with all its output.
+    return drawBashBox($.ui.resolve(e), e.props, e.props.isExpanded === true || open.has(id), () => {
       if (open.has(id)) open.delete(id)
       else open.add(id)
       $.ui.invalidate('ui.render')
@@ -42,8 +42,7 @@ export function registerBashBox(on: On) {
   })
 
   // The box above already holds the result.
-  on('ui.render', { component: 'ToolResult', props: { tool: 'Bash' } }, async ($, e, next) => {
-    if (e.props.isExpanded === true) return next(e)
+  on('ui.render', { component: 'ToolResult', props: { tool: 'Bash' } }, async ($, e) => {
     const { Box } = $.ui.resolve(e)
     return Box({})
   })
@@ -63,9 +62,10 @@ export type Kit = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Code' | 'Butt
 
 /**
  * A Bash call's box. `isOpen` draws all of its output; `toggle` is what a
- * click on the output line runs.
+ * click on the output's tail runs. Given `fold`, a `▾` before the command
+ * runs it: in an open group, that folds the box back to the call's row.
  */
-export function drawBashBox(kit: Kit, call: Call, isOpen: boolean, toggle: () => void): RenderElement {
+export function drawBashBox(kit: Kit, call: Call, isOpen: boolean, toggle: () => void, fold?: () => void): RenderElement {
   const { Box, Text, Code, Button } = kit
   const { isRunning, isErrored, isInterrupted, output } = call
   const id = call.tool_use_id ?? ''
@@ -75,6 +75,9 @@ export function drawBashBox(kit: Kit, call: Call, isOpen: boolean, toggle: () =>
   const row = Box({
     flexDirection: 'row',
     children: [
+      fold === undefined
+        ? null
+        : Button({ key: 'fold:' + id, plain: true, dimColor: true, onPress: fold, children: [' ▾'] }),
       Text({ color: 'success', children: [' ' + ICON + ' '] }),
       Box({ flexShrink: 1, children: [Code({ source: first, language: 'bash', wrap: 'truncate-end' })] }),
       // Kept whole: the command is what gives way to the width.

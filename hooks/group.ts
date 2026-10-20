@@ -13,8 +13,17 @@ type Group = { first: string; calls: { id: string; tool: string; isError: boolea
 /** Groups the person opened, by their first call's id; a reload folds them again. */
 const open = new Set<string>()
 
-/** Calls in an open group whose full box the person opened. */
+/** Calls in an open group drawn as their box instead of their row. */
 const openCalls = new Set<string>()
+
+/** Calls whose box shows all of its output. */
+const fullCalls = new Set<string>()
+
+const flip = ($: EngineInterface, set: Set<string>, id: string) => () => {
+  if (set.has(id)) set.delete(id)
+  else set.add(id)
+  $.ui.invalidate('ui.render')
+}
 
 /** tool_use_id → its group, from the transcript as last read. */
 let byCall = new Map<string, Group>()
@@ -108,51 +117,78 @@ function note(call: Call) {
 }
 
 /**
- * One call of an open group: `│ ✓ bash git status  4 lines`, a button that
- * opens the call's box under it, and folds it again.
+ * One call of an open group: the row `│ ✓ bash git status  4 lines`, one
+ * line however long the command (it is cut, the note is kept); a click turns
+ * it into the call's box. `full` (the message expanded: ctrl+o, or a click
+ * Claude Code took) draws every call as its box with all of its output.
  */
-function callRow($: EngineInterface, kit: Kit, tool: string, call: Call): RenderElement[] {
+function callRow($: EngineInterface, kit: Kit, tool: string, call: Call, full: boolean): RenderElement {
   const { Box, Text, Button } = kit
   const id = call.tool_use_id ?? ''
-  const isOpen = openCalls.has(id)
+  if (full || openCalls.has(id)) {
+    const box = callBox(kit, tool, call, full || fullCalls.has(id), flip($, fullCalls, id), full ? undefined : flip($, openCalls, id))
+    // Indented as the rows are; a box is taller than one gutter mark, so none.
+    return Box({ marginLeft: 3, children: [box] })
+  }
   const mark = call.isRunning ? '◐' : call.isErrored || call.isInterrupted ? '✗' : '✓'
-  const row = Box({
+  return Box({
     flexDirection: 'row',
     children: [
       Text({ dimColor: true, children: [' │ '] }),
-      Button({
-        key: 'call:' + id,
-        plain: true,
-        onPress: () => {
-          if (openCalls.has(id)) openCalls.delete(id)
-          else openCalls.add(id)
-          $.ui.invalidate('ui.render')
-        },
+      Box({
+        flexShrink: 1,
         children: [
-          Text({ color: mark === '✓' ? 'success' : mark === '✗' ? 'error' : 'inactive', children: [mark + ' '] }),
-          Text({ children: [shortName(tool) + ' '] }),
-          Text({ dimColor: true, children: [target(tool, call.input) + '  ' + note(call)] }),
+          Button({
+            key: 'call:' + id,
+            plain: true,
+            onPress: flip($, openCalls, id),
+            children: [
+              Text({ color: mark === '✓' ? 'success' : mark === '✗' ? 'error' : 'inactive', children: [mark + ' '] }),
+              Text({ children: [shortName(tool) + ' '] }),
+              Text({ dimColor: true, wrap: 'truncate-end', children: [target(tool, call.input)] }),
+            ],
+          }),
         ],
       }),
+      Box({ flexShrink: 0, children: [Text({ dimColor: true, children: ['  ' + note(call)] })] }),
     ],
   })
-  return isOpen ? [row, Box({ marginLeft: 3, children: [callBox(kit, tool, call)] })] : [row]
 }
 
-/** An opened call's box: Bash's own, or the call's output in a plain one. */
-function callBox(kit: Kit, tool: string, call: Call): RenderElement {
-  if (tool === 'Bash') return drawBashBox(kit, call, true, () => {})
-  const { Box, Text } = kit
+/**
+ * A call's box: Bash's own, or a plain one with the call's output. Three
+ * lines of output until `isFull`; `toggle` opens or folds the rest, `fold`
+ * turns the box back into the call's row.
+ */
+function callBox(kit: Kit, tool: string, call: Call, isFull: boolean, toggle: () => void, fold?: () => void): RenderElement {
+  if (tool === 'Bash') return drawBashBox(kit, call, isFull, toggle, fold)
+  const { Box, Text, Button } = kit
+  const id = call.tool_use_id ?? ''
   const out = call.output
-  const text = typeof out === 'string' ? out : JSON.stringify(out, null, 2) ?? ''
-  const lines = text.split('\n')
+  const text = typeof out === 'string' ? out : (JSON.stringify(out, null, 2) ?? '')
+  const lines = text.replace(/\s+$/, '').split('\n')
+  const shown = lines.slice(0, isFull ? 200 : 3)
+  const hidden = lines.length - shown.length
+  const tail = isFull ? (hidden > 0 ? '  … ' + hidden + ' more lines' : lines.length > 3 ? '  ▾ fold' : '') : hidden > 0 ? '  ▸ +' + hidden + (hidden === 1 ? ' line' : ' lines') : ''
   return Box({
     flexDirection: 'column',
     borderStyle: 'round',
-    borderColor: call.isErrored ? 'error' : 'success',
+    borderColor: call.isRunning ? 'inactive' : call.isErrored ? 'error' : 'success',
     children: [
-      Text({ children: [' ' + shortName(tool) + ' ' + target(tool, call.input)] }),
-      Text({ dimColor: true, children: [lines.slice(0, 20).map(l => '  ' + l).join('\n') + (lines.length > 20 ? '\n  … ' + (lines.length - 20) + ' more lines' : '')] }),
+      Box({
+        flexDirection: 'row',
+        children: [
+          fold === undefined ? null : Button({ key: 'fold:' + id, plain: true, dimColor: true, onPress: fold, children: [' ▾'] }),
+          Text({ wrap: 'truncate-end', children: [' ' + shortName(tool) + ' ' + target(tool, call.input)] }),
+        ],
+      }),
+      Box({
+        flexDirection: isFull ? 'column' : 'row',
+        children: [
+          Text({ dimColor: true, children: [shown.map(l => '  ' + l).join('\n')] }),
+          tail === '' ? null : Button({ key: 'more:' + id, plain: true, dimColor: true, onPress: toggle, children: [tail] }),
+        ],
+      }),
     ],
   })
 }
@@ -166,13 +202,15 @@ function callBox(kit: Kit, tool: string, call: Call): RenderElement {
  */
 export function registerGroups(on: On) {
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
-    if (e.props.isExpanded === true) return next(e)
     const group = await groupOf($, e.props.tool_use_id)
     if (group === undefined) return next(e)
     const isFirst = group.first === e.props.tool_use_id
-    if (open.has(group.first)) {
+    // Expanded (ctrl+o, or a click on a box's text that Claude Code took for
+    // itself): the group open and every box full, not Claude Code's drawing.
+    const full = e.props.isExpanded === true
+    if (full || open.has(group.first)) {
       const kit = $.ui.resolve(e)
-      const rows = callRow($, kit, e.props.tool, e.props)
+      const rows = [callRow($, kit, e.props.tool, e.props, full)]
       return kit.Box({ flexDirection: 'column', children: isFirst ? [summary($, e, group), ...rows] : rows })
     }
     if (isFirst) return summary($, e, group)
@@ -181,7 +219,6 @@ export function registerGroups(on: On) {
   })
 
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
-    if (e.props.isExpanded === true) return next(e)
     const group = await groupOf($, e.props.tool_use_id)
     if (group === undefined) return next(e)
     // Folded, the group hides it; open, its row (or box) is drawn by the call's ToolUse.
@@ -198,7 +235,7 @@ export function registerGroups(on: On) {
     if (group === undefined) return next(e)
     if (open.has(group.first)) {
       const kit = $.ui.resolve(e)
-      const rows = e.props.calls.flatMap(call => callRow($, kit, call.tool, call))
+      const rows = e.props.calls.map(call => callRow($, kit, call.tool, call, false))
       return kit.Box({ flexDirection: 'column', children: group.first === id ? [summary($, e, group), ...rows] : rows })
     }
     if (group.first === id) return summary($, e, group)
