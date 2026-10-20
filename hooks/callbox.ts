@@ -55,25 +55,28 @@ function subject(call: Call): { spans: Span[]; more: number } {
 /** What the call printed or returned, line by line, coloured where it is a diff. */
 function outputRows(call: Call): Span[][] {
   const out = call.output
-  if (typeof out === 'string') return lines(out).map(text => [{ text, dim: true }])
+  if (typeof out === 'string') return lines(out).map(plain)
   if (!isRecord(out)) return []
   if (Array.isArray(out.structuredPatch) && out.structuredPatch.length > 0) {
     return out.structuredPatch.flatMap((hunk: unknown) =>
       isRecord(hunk) && Array.isArray(hunk.lines)
         ? hunk.lines
             .filter((line): line is string => typeof line === 'string')
-            .map(line => [{ text: clean(line), color: line.startsWith('+') ? 'success' : line.startsWith('-') ? 'error' : undefined, dim: !/^[+-]/.test(line) }])
+            .map(line => [{ text: clean(line), ...(line.startsWith('+') ? { color: 'success' } : line.startsWith('-') ? { color: 'error' } : {}) }])
         : [],
     )
   }
   if (typeof out.stdout === 'string' || typeof out.stderr === 'string') {
     const text = [out.stdout, out.stderr].filter((part): part is string => typeof part === 'string' && part.trim() !== '').join('\n')
-    return lines(text).map(t => [{ text: t, dim: true }])
+    return lines(text).map(plain)
   }
-  if (isRecord(out.file) && typeof out.file.content === 'string') return lines(out.file.content).map(text => [{ text, dim: true }])
-  if (typeof out.content === 'string') return lines(out.content).map(text => [{ text, dim: true }])
-  return lines(JSON.stringify(out, null, 2) ?? '').map(text => [{ text, dim: true }])
+  if (isRecord(out.file) && typeof out.file.content === 'string') return lines(out.file.content).map(plain)
+  if (typeof out.content === 'string') return lines(out.content).map(plain)
+  return lines(JSON.stringify(out, null, 2) ?? '').map(plain)
 }
+
+/** An output line in the text colour; a `$ command` line highlighted as bash. */
+const plain = (text: string): Span[] => (/^\$ \S/.test(text) ? [{ text: '$ ', dim: true }, ...bashSpans(text.slice(2))] : [{ text }])
 
 function lines(text: string) {
   const trimmed = text.replace(/\s+$/, '')
