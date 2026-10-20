@@ -1,4 +1,4 @@
-import type { On } from 'claude-code'
+import type { ElementTable, On, RenderElement } from 'claude-code'
 
 /** The calls whose box the person opened, by tool_use_id; a reload folds them again. */
 const open = new Set<string>()
@@ -33,56 +33,11 @@ const lines = (text: string) => {
 export function registerBashBox(on: On) {
   on('ui.render', { component: 'ToolUse', props: { tool: 'Bash' } }, async ($, e, next) => {
     if (e.props.isExpanded === true || !isRecord(e.props.input)) return next(e)
-    const { tool_use_id: id, isRunning, isErrored, isInterrupted, output } = e.props
-    const command = typeof e.props.input.command === 'string' ? e.props.input.command : ''
-    const { Box, Text, Code, Button } = $.ui.resolve(e)
-
-    const [first = '', ...rest] = command.split('\n')
-    const call = Box({
-      flexDirection: 'row',
-      children: [
-        Text({ color: 'success', children: [' ' + ICON + ' '] }),
-        Box({ flexShrink: 1, children: [Code({ source: first, language: 'bash', wrap: 'truncate-end' })] }),
-        // Kept whole: the command is what gives way to the width.
-        rest.length > 0
-          ? Box({ flexShrink: 0, children: [Text({ dimColor: true, children: [' (+' + plural(rest.length, 'line') + ')'] })] })
-          : null,
-      ],
-    })
-
-    const text = outputText(output, isErrored)
-    const body = text === null ? [] : lines(text)
-    const isOpen = open.has(id)
-    const toggle = () => {
+    const { tool_use_id: id } = e.props
+    return drawBashBox($.ui.resolve(e), e.props, open.has(id), () => {
       if (open.has(id)) open.delete(id)
       else open.add(id)
       $.ui.invalidate('ui.render')
-    }
-
-    let result = null
-    if (isRunning) result = Text({ dimColor: true, children: ['  running…'] })
-    else if (isInterrupted) result = Text({ color: 'error', children: ['  Interrupted'] })
-    else if (body.length === 0) result = Text({ dimColor: true, children: ['  (no output)'] })
-    else {
-      const shown = body.slice(0, isOpen ? OPEN_LINES : FOLDED_LINES)
-      const hidden = body.length - shown.length
-      const tail = isOpen ? (hidden > 0 ? '  … ' + plural(hidden, 'more line') : '  ▾ fold') : hidden > 0 ? '  ▸ +' + plural(hidden, 'line') : ''
-      result = Button({
-        key: id,
-        plain: true,
-        onPress: toggle,
-        children: [
-          Text({ color: isErrored ? 'error' : undefined, dimColor: !isErrored, children: [shown.map(line => '  ' + line).join('\n')] }),
-          Text({ dimColor: true, children: [tail] }),
-        ],
-      })
-    }
-
-    return Box({
-      flexDirection: 'column',
-      borderStyle: 'round',
-      borderColor: isRunning ? 'inactive' : isErrored || isInterrupted ? 'error' : 'success',
-      children: [call, result],
     })
   })
 
@@ -91,6 +46,72 @@ export function registerBashBox(on: On) {
     if (e.props.isExpanded === true) return next(e)
     const { Box } = $.ui.resolve(e)
     return Box({})
+  })
+}
+
+/** What a box is drawn from: a `ToolUse` row's props, or a call of a `ToolGroup`. */
+export type Call = {
+  tool_use_id?: string
+  input: unknown
+  output?: unknown
+  isRunning: boolean
+  isErrored: boolean
+  isInterrupted: boolean
+}
+
+export type Kit = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Code' | 'Button'>
+
+/**
+ * A Bash call's box. `isOpen` draws all of its output; `toggle` is what a
+ * click on the output line runs.
+ */
+export function drawBashBox(kit: Kit, call: Call, isOpen: boolean, toggle: () => void): RenderElement {
+  const { Box, Text, Code, Button } = kit
+  const { isRunning, isErrored, isInterrupted, output } = call
+  const id = call.tool_use_id ?? ''
+  const command = isRecord(call.input) && typeof call.input.command === 'string' ? call.input.command : ''
+
+  const [first = '', ...rest] = command.split('\n')
+  const row = Box({
+    flexDirection: 'row',
+    children: [
+      Text({ color: 'success', children: [' ' + ICON + ' '] }),
+      Box({ flexShrink: 1, children: [Code({ source: first, language: 'bash', wrap: 'truncate-end' })] }),
+      // Kept whole: the command is what gives way to the width.
+      rest.length > 0
+        ? Box({ flexShrink: 0, children: [Text({ dimColor: true, children: [' (+' + plural(rest.length, 'line') + ')'] })] })
+        : null,
+    ],
+  })
+
+  const text = outputText(output, isErrored)
+  const body = text === null ? [] : lines(text)
+
+  let result = null
+  if (isRunning) result = Text({ dimColor: true, children: ['  running…'] })
+  else if (isInterrupted) result = Text({ color: 'error', children: ['  Interrupted'] })
+  else if (body.length === 0) result = Text({ dimColor: true, children: ['  (no output)'] })
+  else {
+    const shown = body.slice(0, isOpen ? OPEN_LINES : FOLDED_LINES)
+    const hidden = body.length - shown.length
+    const tail = isOpen ? (hidden > 0 ? '  … ' + plural(hidden, 'more line') : '  ▾ fold') : hidden > 0 ? '  ▸ +' + plural(hidden, 'line') : ''
+    // Only the tail is the button: a Button inverts under the pointer, which
+    // over a whole output reads as a grey block.
+    result = Box({
+      // Folded, the tail sits after the one line; open, under the lot.
+      flexDirection: isOpen ? 'column' : 'row',
+      children: [
+        Text({ color: isErrored ? 'error' : undefined, dimColor: !isErrored, children: [shown.map(line => '  ' + line).join('\n')] }),
+        tail === '' ? null : Button({ key: 'bash:' + id, plain: true, dimColor: true, onPress: toggle, children: [tail] }),
+      ],
+    })
+  }
+
+  return Box({
+    flexDirection: 'column',
+    borderStyle: 'round',
+    borderColor: isRunning ? 'inactive' : isErrored || isInterrupted ? 'error' : 'success',
+    children: [row, result],
   })
 }
 
