@@ -3,7 +3,7 @@ import type { ElementTable, RenderElement } from 'claude-code'
 export type Kit = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button'>
 
 /** A run of text in one colour (a theme key or a hex), or plain. */
-export type Span = { text: string; color?: string; dim?: boolean; bold?: boolean }
+export type Span = { text: string; color?: string; bg?: string; dim?: boolean; bold?: boolean }
 
 /** A line of a box: `left` is cut to the room `right` (kept whole) leaves it. */
 export type Row = { left: Span[]; right?: Span[] }
@@ -39,10 +39,13 @@ export const textWidth = (text: string) => {
 /** Tabs as spaces, every other control character dropped: one line, drawable. */
 export const clean = (text: string) => text.replace(/\t/g, '    ').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '')
 
-/** Spans cut to `width` cells, an ellipsis where they were cut, padded to exactly `width`. */
-function fit(spans: Span[], width: number): Span[] {
+/**
+ * Spans cut to `width` cells, an ellipsis where they were cut, padded to
+ * exactly `width`; the padding takes `pad`'s background (a tinted diff row).
+ */
+export function fit(spans: Span[], width: number, pad: Omit<Span, 'text'> = {}): Span[] {
   const total = spans.reduce((n, span) => n + textWidth(span.text), 0)
-  if (total <= width) return [...spans, { text: ' '.repeat(width - total) }]
+  if (total <= width) return [...spans, { ...pad, text: ' '.repeat(width - total) }]
   const out: Span[] = []
   let left = width - 1
   for (const span of spans) {
@@ -56,7 +59,7 @@ function fit(spans: Span[], width: number): Span[] {
     out.push({ ...span, text })
     if (text.length < span.text.length) break
   }
-  return [...out, { text: '…', dim: true }, { text: ' '.repeat(left) }]
+  return [...out, { ...pad, text: '…', dim: true }, { ...pad, text: ' '.repeat(left) }]
 }
 
 /** The hover group every border button is in: it lights nothing, it only turns inversion off. */
@@ -65,6 +68,7 @@ const BORDER_SCOPE = 'cc-tidy-border'
 const toText = (kit: Kit, span: Span) =>
   kit.Text({
     ...(span.color === undefined ? {} : { color: span.color }),
+    ...(span.bg === undefined ? {} : { backgroundColor: span.bg }),
     ...(span.dim === true ? { dimColor: true } : {}),
     ...(span.bold === true ? { bold: true } : {}),
     children: [span.text],

@@ -2,6 +2,7 @@ import type { RenderElement } from 'claude-code'
 
 import { bashSpans } from './bash-spans.js'
 import { PI } from './palette.js'
+import { splitDiffRows } from './split.js'
 import { durationOf, formatDuration } from './timing.js'
 import { clean, drawTextBox } from './textbox.js'
 import type { Kit, Row, Span } from './textbox.js'
@@ -54,23 +55,54 @@ function subject(call: Call): { spans: Span[]; more: number } {
   return { spans: [{ text: clean(words), color: PI.toolOutput }], more: 0 }
 }
 
-/** What the call printed or returned, line by line, coloured where it is a diff. */
-function outputRows(call: Call): Span[][] {
-  const out = call.output
-  if (typeof out === 'string') return lines(out).map(plain)
-  if (!isRecord(out)) return []
-  if (Array.isArray(out.structuredPatch) && out.structuredPatch.length > 0) {
-    return out.structuredPatch.flatMap((hunk: unknown) =>
+/** A patch's lines, one pane, `+` green and `-` red. */
+function unifiedRows(patch: unknown[]): Span[][] {
+  return patch.flatMap((hunk: unknown) =>
       isRecord(hunk) && Array.isArray(hunk.lines)
         ? hunk.lines
             .filter((line): line is string => typeof line === 'string')
             .map(line => [{ text: clean(line), color: line.startsWith('+') ? PI.success : line.startsWith('-') ? PI.error : PI.diffContext }])
         : [],
-    )
-  }
+  )
+}
+
+/** A patch as two panes when `inner` has room for them, else as one. */
+const diffRows = (patch: unknown[], inner: number) => splitDiffRows(patch, inner) ?? unifiedRows(patch)
+
+/** `/Users/andy/x` → `~/x`. */
+const tildePath = (path: string) => path.replace(/^\/Users\/[^/]+(?=\/|$)/, '~')
+
+/** The files a shell command changed (`bashEditDiff`): a header each, then its diff. */
+function bashEditRows(diff: unknown, inner: number): Span[][] {
+  if (!isRecord(diff) || diff.skipped === true || diff.unavailable === true || !Array.isArray(diff.files)) return []
+  const rows = diff.files.flatMap((file: unknown): Span[][] => {
+    if (!isRecord(file) || typeof file.filePath !== 'string' || !Array.isArray(file.hunks)) return []
+    const all = file.hunks.flatMap((h: unknown) => (isRecord(h) && Array.isArray(h.lines) ? h.lines : []))
+    const added = all.filter(l => typeof l === 'string' && l.startsWith('+')).length
+    const removed = all.filter(l => typeof l === 'string' && l.startsWith('-')).length
+    const verb = file.created === true ? 'Created ' : file.deleted === true ? 'Deleted ' : 'Updated '
+    const header: Span[] = [
+      { text: verb, color: PI.muted },
+      { text: tildePath(file.filePath), color: PI.toolTitle },
+      { text: ' (+' + added + ' -' + removed + ')', color: PI.muted },
+    ]
+    // A new or removed file has one empty side: one pane says the same.
+    const body = file.created === true || file.deleted === true ? unifiedRows(file.hunks) : diffRows(file.hunks, inner)
+    return [[{ text: '' }], header, ...body]
+  })
+  const more = typeof diff.moreFiles === 'number' ? diff.moreFiles : 0
+  return more > 0 ? [...rows, [{ text: '… ' + more + ' more files changed', color: PI.muted }]] : rows
+}
+
+/** What the call printed or returned, line by line; a diff as two panes. */
+function outputRows(call: Call, inner: number): Span[][] {
+  const out = call.output
+  if (typeof out === 'string') return lines(out).map(plain)
+  if (!isRecord(out)) return []
+  if (Array.isArray(out.structuredPatch) && out.structuredPatch.length > 0) return diffRows(out.structuredPatch, inner)
   if (typeof out.stdout === 'string' || typeof out.stderr === 'string') {
     const text = [out.stdout, out.stderr].filter((part): part is string => typeof part === 'string' && part.trim() !== '').join('\n')
-    return lines(text).map(plain)
+    return [...lines(text).map(plain), ...bashEditRows(out.bashEditDiff, inner)]
   }
   if (isRecord(out.file) && typeof out.file.content === 'string') return lines(out.file.content).map(plain)
   if (typeof out.content === 'string') return lines(out.content).map(plain)
@@ -86,12 +118,27 @@ function lines(text: string) {
   return trimmed === '' ? [] : trimmed.split('\n').map(clean)
 }
 
-/** What the call came to, said short: `12 lines`, `failed`, `running`. */
-export function note(call: Call, rows: number) {
+const lineCount = (n: number) => (n === 0 ? 'no output' : n === 1 ? '1 line' : n + ' lines')
+
+/** What the call came to, said short: `12 lines`, `+4 -1`, `3 lines · 2 files`, `failed`. */
+export function note(call: Call) {
   if (call.isRunning) return 'running'
   if (call.isInterrupted) return 'interrupted'
   if (call.isErrored) return 'failed'
-  return rows === 0 ? 'no output' : rows === 1 ? '1 line' : rows + ' lines'
+  const out = call.output
+  if (typeof out === 'string') return lineCount(lines(out).length)
+  if (!isRecord(out)) return ''
+  if (Array.isArray(out.structuredPatch) && out.structuredPatch.length > 0) {
+    const all = out.structuredPatch.flatMap((h: unknown) => (isRecord(h) && Array.isArray(h.lines) ? h.lines : []))
+    return '+' + all.filter(l => typeof l === 'string' && l.startsWith('+')).length + ' -' + all.filter(l => typeof l === 'string' && l.startsWith('-')).length
+  }
+  if (typeof out.stdout === 'string') {
+    const printed = lineCount(lines([out.stdout, typeof out.stderr === 'string' ? out.stderr : ''].join('\n')).length)
+    const diff = out.bashEditDiff
+    const files = isRecord(diff) && Array.isArray(diff.files) ? diff.files.length + (typeof diff.moreFiles === 'number' ? diff.moreFiles : 0) : 0
+    return files > 0 ? printed + ' · ' + files + (files === 1 ? ' file' : ' files') : printed
+  }
+  return lineCount(outputRows(call, 0).length)
 }
 
 /** The call's state: its border, and the mark before it. */
@@ -109,9 +156,9 @@ function statusOf(call: Call) {
 export function drawCallBox(kit: Kit, call: Call, width: number, isFull: boolean, toggle: () => void): RenderElement {
   const status = statusOf(call)
   const { spans, more } = subject(call)
-  const body = outputRows(call)
+  const body = outputRows(call, width - 4)
   const ms = durationOf(call.tool_use_id ?? '')
-  const tail = [note(call, body.length), ...(ms === undefined ? [] : [formatDuration(ms)])].join(' · ')
+  const tail = [note(call), ...(ms === undefined ? [] : [formatDuration(ms)])].join(' · ')
   const right: Span[] = [
     ...(more > 0 ? [{ text: '  (+' + more + (more === 1 ? ' line)' : ' lines)'), color: PI.muted }] : []),
     { text: '  ' + tail, color: call.isErrored || call.isInterrupted ? PI.error : PI.muted },
