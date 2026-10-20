@@ -1,6 +1,8 @@
 import type { RenderElement } from 'claude-code'
 
 import { bashSpans } from './bash-spans.js'
+import { PI } from './palette.js'
+import { durationOf, formatDuration } from './timing.js'
 import { clean, drawTextBox } from './textbox.js'
 import type { Kit, Row, Span } from './textbox.js'
 
@@ -38,7 +40,7 @@ const ICONS: Record<string, string> = {
 /** `Bash` → `bash`, `mcp__jira__jira_get_issue` → `jira`. */
 export const shortName = (tool: string) => (tool.startsWith('mcp__') ? (tool.split('__')[1] ?? 'mcp') : tool.toLowerCase())
 
-const iconOf = (tool: string) => ICONS[tool.startsWith('mcp__') ? 'mcp' : tool] ?? '\u{f0ad}'
+export const iconOf = (tool: string) => ICONS[tool.startsWith('mcp__') ? 'mcp' : tool] ?? '\u{f0ad}'
 
 /** The call's own words: the command, highlighted, or the file, the pattern, the MCP tool. */
 function subject(call: Call): { spans: Span[]; more: number } {
@@ -49,7 +51,7 @@ function subject(call: Call): { spans: Span[]; more: number } {
   const words = call.tool.startsWith('mcp__')
     ? call.tool.split('__').slice(2).join('__')
     : (pick(call.input, 'file_path') ?? pick(call.input, 'path') ?? pick(call.input, 'pattern') ?? pick(call.input, 'url') ?? pick(call.input, 'description') ?? '')
-  return { spans: [{ text: clean(words) }], more: 0 }
+  return { spans: [{ text: clean(words), color: PI.toolOutput }], more: 0 }
 }
 
 /** What the call printed or returned, line by line, coloured where it is a diff. */
@@ -62,7 +64,7 @@ function outputRows(call: Call): Span[][] {
       isRecord(hunk) && Array.isArray(hunk.lines)
         ? hunk.lines
             .filter((line): line is string => typeof line === 'string')
-            .map(line => [{ text: clean(line), ...(line.startsWith('+') ? { color: 'success' } : line.startsWith('-') ? { color: 'error' } : {}) }])
+            .map(line => [{ text: clean(line), color: line.startsWith('+') ? PI.success : line.startsWith('-') ? PI.error : PI.diffContext }])
         : [],
     )
   }
@@ -76,7 +78,8 @@ function outputRows(call: Call): Span[][] {
 }
 
 /** An output line in the text colour; a `$ command` line highlighted as bash. */
-const plain = (text: string): Span[] => (/^\$ \S/.test(text) ? [{ text: '$ ', dim: true }, ...bashSpans(text.slice(2))] : [{ text }])
+const plain = (text: string): Span[] =>
+  /^\$ \S/.test(text) ? [{ text: '$ ', color: PI.muted }, ...bashSpans(text.slice(2))] : [{ text, color: PI.toolOutput }]
 
 function lines(text: string) {
   const trimmed = text.replace(/\s+$/, '')
@@ -91,26 +94,43 @@ export function note(call: Call, rows: number) {
   return rows === 0 ? 'no output' : rows === 1 ? '1 line' : rows + ' lines'
 }
 
+/** The call's state: its border, and the mark before it. */
+function statusOf(call: Call) {
+  if (call.isRunning) return { color: PI.running, mark: '◐' }
+  if (call.isErrored || call.isInterrupted) return { color: PI.error, mark: '✗' }
+  return { color: PI.success, mark: '✓' }
+}
+
 /**
- * A call as one rounded box: folded, the one line `>_ git status   4 lines`;
- * full, that line and everything the call produced. A click anywhere on the
- * box runs `toggle`.
+ * A call as one rounded box: folded, the one line `✓ >_bash git status
+ * 4 lines · 0.1s`; full, that line and everything the call produced. A
+ * click anywhere on the box runs `toggle`.
  */
 export function drawCallBox(kit: Kit, call: Call, width: number, isFull: boolean, toggle: () => void): RenderElement {
-  const status = call.isRunning ? 'inactive' : call.isErrored || call.isInterrupted ? 'error' : 'success'
+  const status = statusOf(call)
   const { spans, more } = subject(call)
   const body = outputRows(call)
+  const ms = durationOf(call.tool_use_id ?? '')
+  const tail = [note(call, body.length), ...(ms === undefined ? [] : [formatDuration(ms)])].join(' · ')
   const right: Span[] = [
-    ...(more > 0 ? [{ text: '  (+' + more + (more === 1 ? ' line)' : ' lines)'), dim: true }] : []),
-    { text: '  ' + note(call, body.length) + (isFull ? ' ▾' : ' ▸'), dim: true, ...(status === 'error' ? { color: 'error' } : {}) },
+    ...(more > 0 ? [{ text: '  (+' + more + (more === 1 ? ' line)' : ' lines)'), color: PI.muted }] : []),
+    { text: '  ' + tail, color: call.isErrored || call.isInterrupted ? PI.error : PI.muted },
+    { text: isFull ? '  ▾' : '  ▸', color: PI.muted },
   ]
-  const header: Row = { left: [{ text: iconOf(call.tool) + ' ', color: status }, ...spans], right }
+  const header: Row = {
+    left: [
+      { text: status.mark + ' ', color: status.color },
+      { text: iconOf(call.tool) + shortName(call.tool) + ' ', color: PI.toolTitle },
+      ...spans,
+    ],
+    right,
+  }
   const shown = isFull ? body.slice(0, OPEN_LINES) : []
   const hidden = isFull ? body.length - shown.length : 0
   const rows: Row[] = [
     header,
     ...shown.map(left => ({ left })),
-    ...(hidden > 0 ? [{ left: [{ text: '… ' + hidden + ' more lines', dim: true }] }] : []),
+    ...(hidden > 0 ? [{ left: [{ text: '… ' + hidden + ' more lines', color: PI.muted }] }] : []),
   ]
-  return drawTextBox(kit, 'box:' + (call.tool_use_id ?? ''), width, status, rows, toggle)
+  return drawTextBox(kit, 'box:' + (call.tool_use_id ?? ''), width, status.color, rows, toggle)
 }

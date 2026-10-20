@@ -1,6 +1,8 @@
 import type { EngineInterface, On, RenderElement, SessionMessage } from 'claude-code'
 
-import { drawCallBox, shortName } from './callbox.js'
+import { drawCallBox, iconOf, shortName } from './callbox.js'
+import { PI } from './palette.js'
+import { durationOf, formatDuration } from './timing.js'
 import type { Call } from './callbox.js'
 import type { Kit } from './textbox.js'
 
@@ -59,26 +61,32 @@ async function groupOf($: EngineInterface, id: string) {
   return byCall.get(id)
 }
 
-function summaryText(group: Group) {
+/** The summary's parts, pi-tidy's: `▸ 7 calls · >_bash×5  read×2 · 1 failed · 7.7s`. */
+function summarySpans(group: Group, isOpen: boolean) {
   const counts = new Map<string, number>()
-  for (const call of group.calls) counts.set(shortName(call.tool), (counts.get(shortName(call.tool)) ?? 0) + 1)
-  const kinds = [...counts].map(([name, n]) => name + '×' + n).join('  ')
+  for (const call of group.calls) counts.set(call.tool, (counts.get(call.tool) ?? 0) + 1)
+  const kinds = [...counts].map(([tool, n]) => iconOf(tool) + shortName(tool) + '×' + n).join('  ')
   const failed = group.calls.filter(call => call.isError).length
+  const timed = group.calls.map(call => durationOf(call.id)).filter((ms): ms is number => ms !== undefined)
   const n = group.calls.length
-  return n + (n === 1 ? ' call' : ' calls') + ' · ' + kinds + (failed > 0 ? ' · ' + failed + ' failed' : '')
+  const tail = [kinds, ...(failed > 0 ? [failed + ' failed'] : []), ...(timed.length > 0 ? [formatDuration(timed.reduce((a, b) => a + b, 0))] : [])]
+  return [
+    { text: isOpen ? ' ▾ ' : ' ▸ ', color: PI.accent },
+    { text: n + (n === 1 ? ' call' : ' calls'), color: PI.toolTitle },
+    { text: ' · ' + tail.join(' · '), color: PI.muted },
+  ]
 }
 
 type RenderEvent = Parameters<EngineInterface['ui']['resolve']>[0]
 
 /** The group's line, a button that opens or folds it. */
 function summary($: EngineInterface, e: RenderEvent, group: Group) {
-  const { Button } = $.ui.resolve(e)
+  const { Button, Text } = $.ui.resolve(e)
   return Button({
     key: 'group:' + group.first,
     plain: true,
-    dimColor: true,
     onPress: flip($, open, group.first),
-    children: [(open.has(group.first) ? ' ▾ ' : ' ▸ ') + summaryText(group)],
+    children: summarySpans(group, open.has(group.first)).map(span => Text({ color: span.color, children: [span.text] })),
   })
 }
 
@@ -111,7 +119,8 @@ export function registerGroups(on: On) {
     // Expanded (ctrl+o): the group open and every box full, not Claude Code's drawing.
     const full = e.props.isExpanded === true
     const kit = $.ui.resolve(e)
-    if (full || open.has(group.first)) {
+    // Folded, a failed call keeps its box, as pi-tidy keeps its row.
+    if (full || open.has(group.first) || e.props.isErrored || e.props.isInterrupted) {
       const box = callBox($, kit, e.viewport?.columns, e.props, full)
       return kit.Box({ flexDirection: 'column', children: isFirst ? [summary($, e, group), box] : [box] })
     }
@@ -133,10 +142,10 @@ export function registerGroups(on: On) {
     if (group === undefined) return next(e)
     const kit = $.ui.resolve(e)
     const isFirst = group.first === id
-    if (e.props.isExpanded || open.has(group.first)) {
-      const boxes = e.props.calls.map(call => callBox($, kit, e.viewport?.columns, call, e.props.isExpanded))
-      return kit.Box({ flexDirection: 'column', children: isFirst ? [summary($, e, group), ...boxes] : boxes })
-    }
-    return isFirst ? summary($, e, group) : kit.Box({})
+    const isOpen = e.props.isExpanded || open.has(group.first)
+    const calls = isOpen ? e.props.calls : e.props.calls.filter(call => call.isErrored || call.isInterrupted)
+    const boxes = calls.map(call => callBox($, kit, e.viewport?.columns, call, e.props.isExpanded))
+    if (boxes.length === 0) return isFirst ? summary($, e, group) : kit.Box({})
+    return kit.Box({ flexDirection: 'column', children: isFirst ? [summary($, e, group), ...boxes] : boxes })
   })
 }

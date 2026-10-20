@@ -5,18 +5,19 @@
  * colours of its own.
  */
 
+import { PI } from "./palette.js";
 import type { Span } from "./textbox.js";
 
-/** pi's syntax tokens in catppuccin mocha. */
+/** pi's syntax tokens, as its catppuccin mocha theme colours them. */
 const COLORS: Record<string, string> = {
   syntaxFunction: "#89b4fa",
   syntaxKeyword: "#cba6f7",
   syntaxString: "#a6e3a1",
-  syntaxVariable: "#f38ba8",
+  syntaxVariable: "#94e2d5",
   syntaxType: "#f9e2af",
   syntaxOperator: "#89dceb",
   syntaxNumber: "#fab387",
-  syntaxComment: "#6c7086",
+  syntaxComment: "#7f849c",
 };
 
 // Shell grammar keywords (flow control) → syntaxKeyword
@@ -38,7 +39,7 @@ const WORD_BREAK = /[\s'"`$|&;<>()]/;
 export function bashSpans(command: string): Span[] {
   const out: Span[] = [];
   const push = (text: string, token: string | null) => {
-    if (text !== "") out.push(token === null ? { text } : { text, color: COLORS[token] });
+    if (text !== "") out.push({ text, color: token === null ? PI.toolOutput : (COLORS[token] ?? PI.toolOutput) });
   };
 
   let i = 0;
