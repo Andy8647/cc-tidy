@@ -1,0 +1,14 @@
+{
+  "name": "andy-local",
+  "description": "Local Claude Code mods",
+  "owner": {
+    "name": "Andy8647"
+  },
+  "plugins": [
+    {
+      "name": "cc-tidy",
+      "source": "./",
+      "description": "Framed tool boxes, folded diffs, split view on click"
+    }
+  ]
+}

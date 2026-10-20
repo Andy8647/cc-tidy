@@ -1,0 +1,9 @@
+{
+  "name": "cc-tidy",
+  "version": "0.1.0",
+  "description": "pi-tidy for Claude Code: framed tool boxes, folded diffs, split view on click",
+  "author": {
+    "name": "Andy8647",
+    "url": "https://github.com/Andy8647"
+  }
+}
