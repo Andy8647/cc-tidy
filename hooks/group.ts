@@ -30,8 +30,19 @@ let byCall = new Map<string, Group>()
 let readAt = 0
 let reading: Promise<void> | undefined
 
-/** How stale the grouping may be, in ms, before a draw reads the transcript again. */
-const FRESH = 500
+/**
+ * Set when the transcript changed (a call started or ended, a prompt or a
+ * turn went by): the next draw reads it again. Otherwise draws reuse the
+ * grouping, which matters because every scroll step redraws.
+ */
+let stale = true
+
+/** How often, at most, a draw that finds a call outside every group reads the transcript again. */
+const RETRY = 500
+
+export function markStale() {
+  stale = true
+}
 
 function groupsOf(messages: SessionMessage[]) {
   const map = new Map<string, Group>()
@@ -50,7 +61,8 @@ function groupsOf(messages: SessionMessage[]) {
 }
 
 async function groupOf($: EngineInterface, id: string) {
-  if (Date.now() - readAt > FRESH || !byCall.has(id)) {
+  if (stale || (!byCall.has(id) && Date.now() - readAt > RETRY)) {
+    stale = false
     reading ??= $.session.messages().then(messages => {
       byCall = groupsOf(messages)
       readAt = Date.now()
@@ -112,6 +124,20 @@ function callBox($: EngineInterface, kit: Kit, columns: number | undefined, call
  * so Claude Code never takes a click to expand the message (which greys it).
  */
 export function registerGroups(on: On) {
+  // The transcript changed: the next draw reads it again.
+  on('prompt.submit', async ($, e, next) => {
+    markStale()
+    return next(e)
+  })
+  on('turn.start', async ($, e, next) => {
+    markStale()
+    return next(e)
+  })
+  on('turn.complete', async ($, e, next) => {
+    markStale()
+    return next(e)
+  })
+
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const group = await groupOf($, e.props.tool_use_id)
     if (group === undefined) return next(e)

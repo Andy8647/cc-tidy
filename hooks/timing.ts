@@ -1,5 +1,7 @@
 import type { EngineInterface, On } from 'claude-code'
 
+import { markStale } from './group.js'
+
 /** How long each call ran, in ms, by tool_use_id. */
 const durations = new Map<string, number>()
 
@@ -46,11 +48,13 @@ export function registerTiming(on: On) {
 
   on('tool.call', async ($, e, next) => {
     started.set(e.tool_use_id, Date.now())
+    markStale()
     try {
       return await next(e)
     } finally {
       durations.set(e.tool_use_id, Date.now() - (started.get(e.tool_use_id) ?? Date.now()))
       started.delete(e.tool_use_id)
+      markStale()
       if (storeKey !== undefined) void $.store.set(storeKey, Object.fromEntries(durations))
       $.ui.invalidate('ui.render')
     }
