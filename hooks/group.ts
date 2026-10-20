@@ -81,11 +81,13 @@ function summarySpans(group: Group, isOpen: boolean) {
   const failed = group.calls.filter(call => call.isError).length
   const timed = group.calls.map(call => durationOf(call.id)).filter((ms): ms is number => ms !== undefined)
   const n = group.calls.length
-  const tail = [kinds, ...(failed > 0 ? [failed + ' failed'] : []), ...(timed.length > 0 ? [formatDuration(timed.reduce((a, b) => a + b, 0))] : [])]
+  const time = timed.length > 0 ? ' · ' + formatDuration(timed.reduce((a, b) => a + b, 0)) : ''
   return [
     { text: isOpen ? ' ▾ ' : ' ▸ ', color: PI.accent },
     { text: n + (n === 1 ? ' call' : ' calls'), color: PI.toolTitle },
-    { text: ' · ' + tail.join(' · '), color: PI.muted },
+    { text: ' · ' + kinds, color: PI.muted },
+    ...(failed > 0 ? [{ text: ' · ', color: PI.muted }, { text: failed + ' failed', color: PI.error }] : []),
+    { text: time, color: PI.muted },
   ]
 }
 
@@ -145,8 +147,7 @@ export function registerGroups(on: On) {
     // Expanded (ctrl+o): the group open and every box full, not Claude Code's drawing.
     const full = e.props.isExpanded === true
     const kit = $.ui.resolve(e)
-    // Folded, a failed call keeps its box, as pi-tidy keeps its row.
-    if (full || open.has(group.first) || e.props.isErrored || e.props.isInterrupted) {
+    if (full || open.has(group.first)) {
       const box = callBox($, kit, e.viewport?.columns, e.props, full)
       return kit.Box({ flexDirection: 'column', children: isFirst ? [summary($, e, group), box] : [box] })
     }
@@ -168,10 +169,10 @@ export function registerGroups(on: On) {
     if (group === undefined) return next(e)
     const kit = $.ui.resolve(e)
     const isFirst = group.first === id
-    const isOpen = e.props.isExpanded || open.has(group.first)
-    const calls = isOpen ? e.props.calls : e.props.calls.filter(call => call.isErrored || call.isInterrupted)
-    const boxes = calls.map(call => callBox($, kit, e.viewport?.columns, call, e.props.isExpanded))
-    if (boxes.length === 0) return isFirst ? summary($, e, group) : kit.Box({})
-    return kit.Box({ flexDirection: 'column', children: isFirst ? [summary($, e, group), ...boxes] : boxes })
+    if (e.props.isExpanded || open.has(group.first)) {
+      const boxes = e.props.calls.map(call => callBox($, kit, e.viewport?.columns, call, e.props.isExpanded))
+      return kit.Box({ flexDirection: 'column', children: isFirst ? [summary($, e, group), ...boxes] : boxes })
+    }
+    return isFirst ? summary($, e, group) : kit.Box({})
   })
 }
