@@ -1,3 +1,6 @@
+// From cc-split-diff-view (https://github.com/neteye-platform/cc-split-diff-view),
+// Copyright (c) 2026 Würth IT Italy S.r.l., MIT-licensed: see licenses/cc-split-diff-view-MIT.
+
 /** One side of a split row: the line's number in its file and its text. */
 export type Cell = { no: number; text: string }
 
