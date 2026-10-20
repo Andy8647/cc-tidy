@@ -113,3 +113,8 @@ To turn it off: `claude plugin disable cc-tidy@andy-local`.
   pairing (`hooks/split-rows.ts`), MIT, see `licenses/cc-split-diff-view-MIT`.
 - [highlight.js](https://highlightjs.org) 11.11.1: vendored in `hooks/vendor/hljs`,
   BSD-3-Clause, see its `LICENSE`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The vendored and borrowed code keeps its own license, as listed
+under Credits.
