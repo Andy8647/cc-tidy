@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
+import * as HL from '../hooks/highlight.js'
 import { highlightLines, languageOf, paint } from '../hooks/highlight.js'
 
 const PLAIN = '#a6adc8'
@@ -36,4 +37,13 @@ test('paints a tint behind highlighted spans, the changed words deeper', async (
     { text: '(x)', color: '#b', bg: 'ROW' },
   ])
   expect(paint(spans, undefined)).toBe(spans)
+})
+
+test('reads the output language from the command that printed it', async () => {
+  const { languageOfCommand } = HL
+  expect(languageOfCommand('P=~/x; sed -n 40,140p $P/index.ts; ls $P')).toBe('typescript')
+  expect(languageOfCommand('cat app/models.py | head -20')).toBe('python')
+  expect(languageOfCommand('cat a.py b.ts')).toBeUndefined()
+  expect(languageOfCommand('git show b08d9dc -- src/App.tsx')).toBe('diff')
+  expect(languageOfCommand('ls -la')).toBeUndefined()
 })

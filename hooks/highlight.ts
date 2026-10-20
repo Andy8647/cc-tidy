@@ -215,3 +215,26 @@ export function paint(spans: Span[], bg: string | undefined, range?: [number, nu
   }
   return out
 }
+
+/** Commands that print a file as it is, so their output is that file's language. */
+const PRINTS_FILE = new Set(['cat', 'bat', 'head', 'tail', 'sed', 'nl', 'less', 'more', 'tac'])
+
+/**
+ * The language a shell command's output is in, judged from the command: one
+ * that prints files (`cat x.py`, `sed -n 40,140p $P/index.ts`) gives its
+ * files' language when they all share one; `git diff`/`git show` gives diff.
+ */
+export function languageOfCommand(command: string): string | undefined {
+  if (/\bgit\s+(diff|show|log\s+-p)\b/.test(command)) return 'diff'
+  const found = new Set<string>()
+  for (const part of command.split(/;|&&|\|\||\||\n/)) {
+    const words = part.trim().split(/\s+/)
+    if (!PRINTS_FILE.has(words[0] ?? '')) continue
+    for (const word of words.slice(1)) {
+      if (word.startsWith('-') || /^[\d,]+p?$/.test(word) || /^['"]/.test(word)) continue
+      const language = languageOf(word.replace(/['"]/g, ''))
+      if (language !== undefined) found.add(language)
+    }
+  }
+  return found.size === 1 ? [...found][0] : undefined
+}

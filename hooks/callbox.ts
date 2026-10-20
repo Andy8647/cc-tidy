@@ -2,7 +2,7 @@ import type { RenderElement } from 'claude-code'
 
 import { bashSpans } from './bash-spans.js'
 import { PI } from './palette.js'
-import { highlightLines, languageOf } from './highlight.js'
+import { highlightLines, languageOf, languageOfCommand } from './highlight.js'
 import { splitDiffRows } from './split.js'
 import { durationOf, formatDuration } from './timing.js'
 import { clean, drawTextBox } from './textbox.js'
@@ -113,7 +113,11 @@ function outputRows(call: Call, inner: number): Span[][] {
   if (Array.isArray(out.structuredPatch) && out.structuredPatch.length > 0) return diffRows(out.structuredPatch, inner, language)
   if (typeof out.stdout === 'string' || typeof out.stderr === 'string') {
     const text = [out.stdout, out.stderr].filter((part): part is string => typeof part === 'string' && part.trim() !== '').join('\n')
-    return [...lines(text).map(plain), ...bashEditRows(out.bashEditDiff, inner)]
+    // The output's language, when the command printed files of one. No guessing from the
+    // text: highlight.js scores a short `ls -la` as CSS as high as real Python.
+    const printed = languageOfCommand(pick(call.input, 'command') ?? '')
+    const rows = printed === undefined ? lines(text).map(plain) : highlighted(text, printed)
+    return [...rows, ...bashEditRows(out.bashEditDiff, inner)]
   }
   if (isRecord(out.file) && typeof out.file.content === 'string') return highlighted(out.file.content, language)
   if (typeof out.content === 'string') return highlighted(out.content, language)
@@ -171,7 +175,8 @@ function statusOf(call: Call) {
 export function drawCallBox(kit: Kit, call: Call, width: number, isFull: boolean, toggle: () => void): RenderElement {
   const status = statusOf(call)
   const { spans, more } = subject(call)
-  const body = outputRows(call, width - 4)
+  // Folded, nothing below the header is drawn: don't build (or highlight) it.
+  const body = isFull ? outputRows(call, width - 4) : []
   const ms = durationOf(call.tool_use_id ?? '')
   const tail = [note(call), ...(ms === undefined ? [] : [formatDuration(ms)])].join(' · ')
   const right: Span[] = [
