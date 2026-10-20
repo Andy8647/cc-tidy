@@ -2,6 +2,7 @@ import type { RenderElement } from 'claude-code'
 
 import { bashSpans } from './bash-spans.js'
 import { PI } from './palette.js'
+import { highlightLines, languageOf } from './highlight.js'
 import { splitDiffRows } from './split.js'
 import { durationOf, formatDuration } from './timing.js'
 import { clean, drawTextBox } from './textbox.js'
@@ -55,19 +56,24 @@ function subject(call: Call): { spans: Span[]; more: number } {
   return { spans: [{ text: clean(words), color: PI.toolOutput }], more: 0 }
 }
 
-/** A patch's lines, one pane, `+` green and `-` red. */
-function unifiedRows(patch: unknown[]): Span[][] {
+/** A patch's lines, one pane: the `+`/`-` mark in green or red, the code highlighted. */
+function unifiedRows(patch: unknown[], language: string | undefined): Span[][] {
   return patch.flatMap((hunk: unknown) =>
-      isRecord(hunk) && Array.isArray(hunk.lines)
-        ? hunk.lines
-            .filter((line): line is string => typeof line === 'string')
-            .map(line => [{ text: clean(line), color: line.startsWith('+') ? PI.success : line.startsWith('-') ? PI.error : PI.diffContext }])
-        : [],
+    isRecord(hunk) && Array.isArray(hunk.lines)
+      ? hunk.lines
+          .filter((line): line is string => typeof line === 'string')
+          .map(line => {
+            const mark = line.charAt(0)
+            const code = highlightLines(clean(line.slice(1)), language, mark === ' ' ? PI.diffContext : PI.toolOutput)[0] ?? []
+            return [{ text: mark, color: mark === '+' ? PI.success : mark === '-' ? PI.error : PI.diffContext }, ...code]
+          })
+      : [],
   )
 }
 
 /** A patch as two panes when `inner` has room for them, else as one. */
-const diffRows = (patch: unknown[], inner: number) => splitDiffRows(patch, inner) ?? unifiedRows(patch)
+const diffRows = (patch: unknown[], inner: number, language: string | undefined) =>
+  splitDiffRows(patch, inner, language) ?? unifiedRows(patch, language)
 
 /** `/Users/andy/x` → `~/x`. */
 const tildePath = (path: string) => path.replace(/^\/Users\/[^/]+(?=\/|$)/, '~')
@@ -87,7 +93,8 @@ function bashEditRows(diff: unknown, inner: number): Span[][] {
       { text: ' (+' + added + ' -' + removed + ')', color: PI.muted },
     ]
     // A new or removed file has one empty side: one pane says the same.
-    const body = file.created === true || file.deleted === true ? unifiedRows(file.hunks) : diffRows(file.hunks, inner)
+    const language = languageOf(file.filePath)
+    const body = file.created === true || file.deleted === true ? unifiedRows(file.hunks, language) : diffRows(file.hunks, inner, language)
     return [[{ text: '' }], header, ...body]
   })
   const more = typeof diff.moreFiles === 'number' ? diff.moreFiles : 0
@@ -99,19 +106,27 @@ function outputRows(call: Call, inner: number): Span[][] {
   const out = call.output
   if (typeof out === 'string') return lines(out).map(plain)
   if (!isRecord(out)) return []
-  if (Array.isArray(out.structuredPatch) && out.structuredPatch.length > 0) return diffRows(out.structuredPatch, inner)
+  const path = pick(call.input, 'file_path') ?? (typeof out.filePath === 'string' ? out.filePath : undefined)
+  const language = languageOf(path)
+  // A new file: its content, highlighted (its patch is the whole file as +).
+  if (call.tool === 'Write' && out.type === 'create' && typeof out.content === 'string') return highlighted(out.content, language)
+  if (Array.isArray(out.structuredPatch) && out.structuredPatch.length > 0) return diffRows(out.structuredPatch, inner, language)
   if (typeof out.stdout === 'string' || typeof out.stderr === 'string') {
     const text = [out.stdout, out.stderr].filter((part): part is string => typeof part === 'string' && part.trim() !== '').join('\n')
     return [...lines(text).map(plain), ...bashEditRows(out.bashEditDiff, inner)]
   }
-  if (isRecord(out.file) && typeof out.file.content === 'string') return lines(out.file.content).map(plain)
-  if (typeof out.content === 'string') return lines(out.content).map(plain)
+  if (isRecord(out.file) && typeof out.file.content === 'string') return highlighted(out.file.content, language)
+  if (typeof out.content === 'string') return highlighted(out.content, language)
   return lines(JSON.stringify(out, null, 2) ?? '').map(plain)
 }
 
 /** An output line in the text colour; a `$ command` line highlighted as bash. */
 const plain = (text: string): Span[] =>
   /^\$ \S/.test(text) ? [{ text: '$ ', color: PI.muted }, ...bashSpans(text.slice(2))] : [{ text, color: PI.toolOutput }]
+
+/** A file's text, highlighted as its language, trailing blank lines dropped. */
+const highlighted = (text: string, language: string | undefined) =>
+  highlightLines(text.replace(/\s+$/, '').replace(/\t/g, '    '), language, PI.toolOutput).map(row => row.map(span => ({ ...span, text: clean(span.text) })))
 
 function lines(text: string) {
   const trimmed = text.replace(/\s+$/, '')

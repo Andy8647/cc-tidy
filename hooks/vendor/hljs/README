@@ -1,0 +1,2 @@
+highlight.js 11.11.1, from @highlightjs/cdn-assets (es/ build), BSD-3-Clause (see LICENSE).
+Only the core and the languages cc-tidy registers are kept; the .d.ts files are ours.

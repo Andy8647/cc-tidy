@@ -1,3 +1,4 @@
+import { highlightLines, paint } from './highlight.js'
 import { PI } from './palette.js'
 import { splitRows } from './split-rows.js'
 import type { Cell } from './split-rows.js'
@@ -44,18 +45,20 @@ function commonEdges(left: string, right: string) {
  * One pane's cell, exactly `width` cells: a bar on a changed line, the line's
  * number, then its text, tinted when changed and the changed words deeper.
  */
-function cell(line: Cell | null, kind: 'removed' | 'added', changed: boolean, numberWidth: number, width: number, emphasis?: [number, number]): Span[] {
+function cell(
+  line: Cell | null,
+  kind: 'removed' | 'added',
+  changed: boolean,
+  numberWidth: number,
+  width: number,
+  language: string | undefined,
+  emphasis?: [number, number],
+): Span[] {
   if (line === null) return [{ text: ' '.repeat(width) }]
   const look = changed ? TINT[kind] : undefined
   const text = clean(line.text)
-  const body: Span[] =
-    look !== undefined && emphasis !== undefined && emphasis[1] > emphasis[0]
-      ? [
-          { text: text.slice(0, emphasis[0]), color: PI.toolOutput, bg: look.row },
-          { text: text.slice(emphasis[0], emphasis[1]), color: PI.toolOutput, bg: look.word },
-          { text: text.slice(emphasis[1]), color: PI.toolOutput, bg: look.row },
-        ]
-      : [{ text, color: changed ? PI.toolOutput : PI.diffContext, ...(look === undefined ? {} : { bg: look.row }) }]
+  const coloured = highlightLines(text, language, changed ? PI.toolOutput : PI.diffContext)[0] ?? []
+  const body = paint(coloured, look?.row, emphasis !== undefined && emphasis[1] > emphasis[0] ? emphasis : undefined, look?.word)
   const textWidthLeft = Math.max(1, width - 2 - numberWidth)
   return [
     { text: changed ? '▌' : ' ', color: look?.bar ?? PI.muted },
@@ -70,7 +73,7 @@ function cell(line: Cell | null, kind: 'removed' | 'added', changed: boolean, nu
  * A removed line sits next to the line that replaced it, with the words that
  * changed between them emphasised.
  */
-export function splitDiffRows(patch: unknown, inner: number): Span[][] | null {
+export function splitDiffRows(patch: unknown, inner: number, language?: string): Span[][] | null {
   if (inner < SPLIT_MIN_WIDTH) return null
   const diff = splitRows(patch)
   if (diff === null) return null
@@ -83,8 +86,8 @@ export function splitDiffRows(patch: unknown, inner: number): Span[][] | null {
     }
     const pair = row.changed && row.left !== null && row.right !== null
     const edges = pair ? commonEdges(row.left!.text, row.right!.text) : undefined
-    const left = cell(row.left, 'removed', row.changed, diff.numberWidth, pane, edges && [edges.prefix, row.left!.text.length - edges.suffix])
-    const right = cell(row.right, 'added', row.changed, diff.numberWidth, pane, edges && [edges.prefix, row.right!.text.length - edges.suffix])
+    const left = cell(row.left, 'removed', row.changed, diff.numberWidth, pane, language, edges && [edges.prefix, row.left!.text.length - edges.suffix])
+    const right = cell(row.right, 'added', row.changed, diff.numberWidth, pane, language, edges && [edges.prefix, row.right!.text.length - edges.suffix])
     return [...left, rule, ...right]
   })
 }
