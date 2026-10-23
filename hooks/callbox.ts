@@ -44,16 +44,30 @@ export const shortName = (tool: string) => (tool.startsWith('mcp__') ? (tool.spl
 
 export const iconOf = (tool: string) => ICONS[tool.startsWith('mcp__') ? 'mcp' : tool] ?? '\u{f0ad}'
 
-/** The call's own words: the command, highlighted, or the file, the pattern, the MCP tool. */
-function subject(call: Call): { spans: Span[]; more: number } {
-  if (call.tool === 'Bash') {
-    const [first = '', ...rest] = (pick(call.input, 'command') ?? '').split('\n')
-    return { spans: bashSpans(clean(first)), more: rest.length }
+/**
+ * The call's own words, pi-tidy's: a shell command's first line and how many
+ * lines follow it; else the file, the pattern, the MCP tool, or the first
+ * string argument.
+ */
+export function argParts(call: Call): { text: string; more: number } {
+  const command = pick(call.input, 'command')
+  if (command !== undefined) {
+    const [first = '', ...rest] = command.split('\n')
+    return { text: clean(first.trim()), more: rest.length }
   }
-  const words = call.tool.startsWith('mcp__')
-    ? call.tool.split('__').slice(2).join('__')
-    : (pick(call.input, 'file_path') ?? pick(call.input, 'path') ?? pick(call.input, 'pattern') ?? pick(call.input, 'url') ?? pick(call.input, 'description') ?? '')
-  return { spans: [{ text: clean(words), color: PI.toolOutput }], more: 0 }
+  if (call.tool.startsWith('mcp__')) return { text: call.tool.split('__').slice(2).join('__'), more: 0 }
+  for (const key of ['file_path', 'path', 'pattern', 'url', 'query', 'description']) {
+    const value = pick(call.input, key)
+    if (value !== undefined && value !== '') return { text: clean(tildePath(value)), more: 0 }
+  }
+  const first = isRecord(call.input) ? Object.values(call.input).find(value => typeof value === 'string' && value !== '') : undefined
+  return { text: typeof first === 'string' ? clean(first.split('\n')[0] ?? '') : '', more: 0 }
+}
+
+/** The call's own words, the command highlighted: the head of a box. */
+function subject(call: Call): { spans: Span[]; more: number } {
+  const { text, more } = argParts(call)
+  return { spans: call.tool === 'Bash' ? bashSpans(text) : [{ text, color: PI.toolOutput }], more }
 }
 
 /** A patch's lines, one pane: the `+`/`-` mark in green or red, the code highlighted. */
@@ -76,7 +90,7 @@ const diffRows = (patch: unknown[], inner: number, language: string | undefined)
   splitDiffRows(patch, inner, language) ?? unifiedRows(patch, language)
 
 /** `/Users/andy/x` → `~/x`. */
-const tildePath = (path: string) => path.replace(/^\/Users\/[^/]+(?=\/|$)/, '~')
+export const tildePath = (path: string) => path.replace(/^\/Users\/[^/]+(?=\/|$)/, '~')
 
 /** The files a shell command changed (`bashEditDiff`): a header each, then its diff. */
 function bashEditRows(diff: unknown, inner: number): Span[][] {
@@ -102,7 +116,7 @@ function bashEditRows(diff: unknown, inner: number): Span[][] {
 }
 
 /** What the call printed or returned, line by line; a diff as two panes. */
-function outputRows(call: Call, inner: number): Span[][] {
+export function outputRows(call: Call, inner: number): Span[][] {
   const out = call.output
   if (typeof out === 'string') return lines(out).map(plain)
   if (!isRecord(out)) return []
@@ -137,32 +151,65 @@ function lines(text: string) {
   return trimmed === '' ? [] : trimmed.split('\n').map(clean)
 }
 
-const lineCount = (n: number) => (n === 0 ? 'no output' : n === 1 ? '1 line' : n + ' lines')
+const plural = (n: number, one: string, many = one + 's') => n + ' ' + (n === 1 ? one : many)
 
-/** What the call came to, said short: `12 lines`, `+4 -1`, `3 lines · 2 files`, `failed`. */
+/**
+ * A failed Bash call's first line: `Exit code N` as the model reads it,
+ * `Error: Exit code N` as the transcript stores it.
+ */
+const EXIT = /^(?:Error: )?Exit code (\d+)\n?/
+
+/**
+ * A failure with nothing to read: the call exited non-zero and said nothing
+ * (`test`, a probe, `sed` on a path that moved). pi-tidy keeps its red `✗`
+ * and dims the rest, so it doesn't compete with the reply.
+ */
+export function isSilentFailure(call: Call) {
+  if (!call.isErrored || call.isRunning || call.isInterrupted) return false
+  return typeof call.output !== 'string' || call.output.replace(EXIT, '').trim() === ''
+}
+
+/**
+ * What the call came to, said short, as pi-tidy says it: `12 lines`, `+4 -1`,
+ * `3 lines · 2 files`, `exit 1`. Built-in tools only: anything else gets
+ * none rather than a wrong one, and so does a call still running.
+ */
 export function note(call: Call) {
-  if (call.isRunning) return 'running'
+  if (call.isRunning) return ''
   if (call.isInterrupted) return 'interrupted'
-  if (call.isErrored) return 'failed'
   const out = call.output
-  if (typeof out === 'string') return lineCount(lines(out).length)
+  if (call.isErrored) {
+    const code = typeof out === 'string' ? EXIT.exec(out)?.[1] : undefined
+    return code === undefined ? '' : 'exit ' + code
+  }
   if (!isRecord(out)) return ''
   if (Array.isArray(out.structuredPatch) && out.structuredPatch.length > 0) {
     const all = out.structuredPatch.flatMap((h: unknown) => (isRecord(h) && Array.isArray(h.lines) ? h.lines : []))
     return '+' + all.filter(l => typeof l === 'string' && l.startsWith('+')).length + ' -' + all.filter(l => typeof l === 'string' && l.startsWith('-')).length
   }
+  if (call.tool === 'Write' && typeof out.content === 'string') return plural(lines(out.content).length, 'line')
   if (typeof out.stdout === 'string') {
-    const printed = lineCount(lines([out.stdout, typeof out.stderr === 'string' ? out.stderr : ''].join('\n')).length)
+    const n = lines([out.stdout, typeof out.stderr === 'string' ? out.stderr : ''].join('\n')).length
     const diff = out.bashEditDiff
     const files = isRecord(diff) && Array.isArray(diff.files) ? diff.files.length + (typeof diff.moreFiles === 'number' ? diff.moreFiles : 0) : 0
-    return files > 0 ? printed + ' · ' + files + (files === 1 ? ' file' : ' files') : printed
+    const printed = n > 0 ? plural(n, 'line') : ''
+    return files > 0 ? [printed, plural(files, 'file')].filter(Boolean).join(' · ') : printed
   }
-  return lineCount(outputRows(call, 0).length)
+  if (call.tool === 'Read' && isRecord(out.file)) {
+    const n = typeof out.file.numLines === 'number' ? out.file.numLines : typeof out.file.content === 'string' ? lines(out.file.content).length : undefined
+    return n === undefined ? '' : plural(n, 'line')
+  }
+  if (call.tool === 'Glob' && typeof out.numFiles === 'number') return out.numFiles === 0 ? 'no files' : plural(out.numFiles, 'file')
+  if (call.tool === 'Grep') {
+    const n = out.mode === 'content' ? out.numLines : out.numFiles
+    if (typeof n === 'number') return n === 0 ? 'no matches' : out.mode === 'content' ? plural(n, 'line') : plural(n, 'file')
+  }
+  return ''
 }
 
-/** The call's state: its border, and the mark before it. */
-function statusOf(call: Call) {
-  if (call.isRunning) return { color: PI.running, mark: '◐' }
+/** The call's state: its border, and the mark before it (pi-tidy's `⋯ ✗ ✓`). */
+export function statusOf(call: Call) {
+  if (call.isRunning) return { color: PI.running, mark: '⋯' }
   if (call.isErrored || call.isInterrupted) return { color: PI.error, mark: '✗' }
   return { color: PI.success, mark: '✓' }
 }
@@ -178,10 +225,10 @@ export function drawCallBox(kit: Kit, call: Call, width: number, isFull: boolean
   // Folded, nothing below the header is drawn: don't build (or highlight) it.
   const body = isFull ? outputRows(call, width - 4) : []
   const ms = durationOf(call.tool_use_id ?? '')
-  const tail = [note(call), ...(ms === undefined ? [] : [formatDuration(ms)])].join(' · ')
+  const tail = [note(call), ms === undefined ? '' : formatDuration(ms)].filter(Boolean).join(' · ')
   const right: Span[] = [
     ...(more > 0 ? [{ text: '  (+' + more + (more === 1 ? ' line)' : ' lines)'), color: PI.muted }] : []),
-    { text: '  ' + tail, color: call.isErrored || call.isInterrupted ? PI.error : PI.muted },
+    ...(tail === '' ? [] : [{ text: '  ' + tail, color: call.isErrored || call.isInterrupted ? PI.error : PI.muted }]),
     { text: isFull ? '  ▾' : '  ▸', color: PI.muted },
   ]
   const header: Row = {

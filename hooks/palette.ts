@@ -10,5 +10,9 @@ export const PI = {
   diffContext: '#7f849c', // overlay1
   success: '#a6e3a1',
   error: '#f38ba8',
+  warning: '#f9e2af', // yellow: `running <tool>` in a summary
   running: '#6c7086', // overlay0
+  borderMuted: '#45475a', // surface1: an open group's rail
+  selectedBg: '#313244', // surface0: the band under the pointer
+  dim: '#6c7086', // overlay0: a silent failure's row
 } as const

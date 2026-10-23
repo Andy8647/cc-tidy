@@ -1,11 +1,12 @@
 {
   "name": "cc-tidy",
-  "version": "0.1.0",
-  "description": "pi-tidy for Claude Code: framed tool boxes, folded diffs, split view on click",
+  "version": "0.2.0",
+  "description": "pi-tidy for Claude Code: a reply's tool calls fold into one line, click to open",
   "author": {
     "name": "Andy8647",
     "url": "https://github.com/Andy8647"
   },
   "license": "MIT",
-  "repository": "https://github.com/Andy8647/cc-tidy"
+  "repository": "https://github.com/Andy8647/cc-tidy",
+  "types": "./types/index.d.ts"
 }

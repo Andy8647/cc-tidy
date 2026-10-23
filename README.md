@@ -6,53 +6,68 @@
 A reply's tool calls fold into one line, and you click it open:
 
 ```
- ▸ 7 calls ·  bash×5   read×2 · 1 failed · 7.7s
+ ▸ 7 calls ·  bash×5   read×2 · 󰧑 3 thoughts · 1 failed · 7.7s
 ```
 
-Click the summary and each call becomes a one-line box. Click a box to see everything the
-call produced, then click anywhere on it to fold it back.
+Click the summary and each call becomes a row on a rail, with the model's thinking
+before it. Click a row to see what the call produced hanging under it, and click that
+to fold it back.
 
 ```
- ▾ 3 calls ·  bash×3 · 1.4s
- ╭──────────────────────────────────────────────────────────╮
- │ ✓  bash ls                              4 lines · 0.0s ▸ │
- ╰──────────────────────────────────────────────────────────╯
- ╭──────────────────────────────────────────────────────────╮
- │ ✓  bash git log --oneline | head -3    3 lines · 1.0s ▾ │
- │ 5f4b504 wip: Make fullscreen scrolling over split diffs  │
- │ …                                                        │
+ ▾ 3 calls ·  bash×3 · 󰧑 1 thought · 1 failed · 1.4s
+ │ ✓  bash ls                                               4 lines · 0.0s
+ │ 󰧑 thinking  The test probably fails on the missing fixture…
+ ├─ ✗  bash pnpm test                                       exit 1 · 1.3s
+ │    FAIL src/a.test.ts
+ │    …
+ │ ✓  bash git log --oneline | head -3                      3 lines · 0.1s
 ```
 
-> **Status: experimental.** It works, but scrolling is noticeably laggy in real sessions
-> (see [Known issues](#known-issues)). Claude Code's mod API is early access, so a Claude
-> Code update can break it.
+> **Status: experimental.** Claude Code's mod API is early access, so a Claude Code
+> update can break it. Scrolling costs more than without the mod (see
+> [Known issues](#known-issues)).
 
 ## Features
 
 - **Grouped tool calls.** Every tool call between two pieces of text (a user message, or an
-  assistant message with visible text) folds into one summary line: a count, each tool with
-  its icon, failures in red, and the total time. Claude Code's own folds ("Ran 3 shell
-  commands", "Called Jira") go away; their calls belong to the group.
-- **One box per call.** It is a rounded box with the call's status mark, icon, highlighted
-  command or file, and a short note (`12 lines`, `+4 -1`, `3 lines · 2 files`, `failed`)
-  with its duration. Running calls have a grey border, failed calls red, and the rest green.
-- **Click anywhere.** Every cell of a box is the mod's own button, borders included, so a
-  click never reaches Claude Code. Claude Code would otherwise expand the message and grey
-  it. The border doesn't light up under the pointer.
+  assistant message with visible text) folds into one summary line, as pi-tidy's does: a
+  count, each tool with its icon (most frequent first), the thinking runs, failures in red,
+  background jobs still running, and the total time (`running bash` while a call runs).
+  Claude Code's own folds ("Ran 3 shell commands", "Called Jira") go away; their calls
+  belong to the group.
+- **One row per call.** An open group is a rail of rows: the status mark, icon, the command
+  or file, and the metrics (`12 lines`, `+4 -1`, `exit 1`, the duration) in columns that end
+  on the same cell. The command gets the row's width; the metrics give way first on a narrow
+  screen. A failure with nothing to read (`test -f x`, `false`) keeps its red `✗` and dims.
+- **Opened calls hang under their row.** No box inside a group: the rail takes a tick
+  (`├─`) and the output hangs five cells in. A click anywhere on it folds it back.
+- **Running calls show up.** A call that has run for a second gets its row even in a folded
+  group, its time going up. One that finishes inside the second never appears.
+- **Background jobs.** A `run_in_background` command's row tracks the job: a spinner and
+  `running 12s`, then `exited 0 · 20s`, `exit 1`, `killed`. The summary adds `◐ 1 running`.
+  The job's "Background command … completed" notification isn't drawn; the row says so.
+- **Thinking rows.** Each run of thinking before a call is a row above it,
+  `󰧑 thinking  <its first words>`. Click it for the whole run. While a run is arriving the
+  summary says `◐ thinking`, and an open group shows its newest words under the newest call.
+  This needs `"showThinkingSummaries": true` in `~/.claude/settings.json`: without it Claude
+  Code asks the API for no thinking text, and there are no rows.
+- **Hover band.** The row under the pointer gets pi's `selectedBg` band, the whole width.
+- **Click anywhere.** Every cell of a row is the mod's own button, so a click never reaches
+  Claude Code, which would otherwise expand the message and grey it.
 - **Two-pane diffs.** Edit, Write, and Bash commands that changed files draw their diff as
   `old │ new`: line numbers, a bar on changed lines, a tinted row, and the changed words in
   a deeper tint (pi-tidy's tint formula). Below 72 columns they fall back to one pane.
 - **Syntax highlighting.** Read output, new files, and every diff line are highlighted as
   the file's language with a vendored [highlight.js](https://highlightjs.org) (44
-  languages). Bash commands use pi-tidy's tokenizer. Bash output is highlighted when the
-  command printed files of one language (`cat x.py`, `sed -n 1,80p a.ts`, `git diff`).
+  languages). Bash commands in a box use pi-tidy's tokenizer. Bash output is highlighted
+  when the command printed files of one language (`cat x.py`, `sed -n 1,80p a.ts`, `git diff`).
 - **pi's colours.** Everything is drawn in pi's catppuccin mocha palette, the colours
   pi-tidy uses.
-- `ctrl+o` draws every group open and every box full.
+- `ctrl+o` draws every group open and every call and thinking run opened.
 
 ## Requirements
 
-- Claude Code with mods (tested on **2.1.304**), in **fullscreen** mode (`"tui":
+- Claude Code with mods (tested on **2.1.309**), in **fullscreen** mode (`"tui":
   "fullscreen"`). Clicks need the fullscreen terminal's mouse reporting.
 - A [Nerd Font](https://www.nerdfonts.com) for the icons.
 - Built for [Ghostty](https://ghostty.org). Other terminals should work. The icons look
@@ -61,44 +76,50 @@ call produced, then click anywhere on it to fold it back.
 ## Install
 
 ```bash
-git clone https://github.com/Andy8647/cc-tidy.git
-claude plugin marketplace add ./cc-tidy
-claude plugin install cc-tidy@andy-local
+claude plugin marketplace add Andy8647/cc-tidy
+claude plugin install cc-tidy@andy8647
 ```
 
-A directory marketplace loads the plugin in place, so edits to the clone apply at the next
-session or after `/reload-plugins`. To try it for one session without installing:
+Or inside Claude Code: `/plugin marketplace add Andy8647/cc-tidy`, then
+`/plugin install cc-tidy@andy8647`. Run `/reload-plugins` (or start a new session) to load it.
+
+To update: `claude plugin marketplace update andy8647`, then
+`claude plugin update cc-tidy@andy8647`. To turn it off:
+`claude plugin disable cc-tidy@andy8647`.
+
+To work on it, clone the repo and load your clone for one session:
 
 ```bash
+git clone https://github.com/Andy8647/cc-tidy.git
 claude --plugin-dir ./cc-tidy
 ```
 
-To turn it off: `claude plugin disable cc-tidy@andy-local`.
-
 ## Known issues
 
-- **Scrolling is laggy**, most of all past open boxes. In fullscreen, Claude Code re-runs a
-  mod's render hook on every scroll step that moves a message's edge, and re-renders the
-  whole answer (the viewport position is part of the re-run key, and answers aren't
-  memoised). A box is drawn as one Button per border cell and per content row, so an open
-  40-line box is about 120 Buttons, and all of them re-render on each step. With every group
-  folded, a scroll step measured 1–2 ms in a test harness. Real sessions still feel slow,
-  and that hasn't been profiled yet.
-- **A content row inverts under the pointer.** Claude Code's plugin Buttons always invert
-  while hovered. Only the border is kept from inverting, through a hover override.
+- **Scrolling costs more than without the mod.** In fullscreen, Claude Code re-runs a mod's
+  render hook for each message whose edge a scroll step moves (the viewport position is
+  part of the re-run key, with no opt-out). On a session full of tool calls, measured in a
+  pty, scrolling took about twice the CPU it takes with no mod, a few ms a step. A mod that
+  hooks the same rows and only hands back Claude Code's own drawing, or one line of text,
+  costs the same, so the cost is in hooking those rows at all, not in what cc-tidy draws.
+- **No `▶` or `›` on hover.** pi-tidy turns the folded `▸` into `▶` and adds a `›` to a
+  hovered row. A Button's hover can only restyle
+  text, and a revealed overlay would be a cell that isn't a Button, which a click would
+  pass to Claude Code. So there is the band alone.
 - **No durations for old calls.** Each call is timed around its execution, because the
-  transcript keeps no timestamps. Calls made before the mod was loaded show no time.
-- **Highlighting needs a known language.** Inside a box, only highlight.js can colour code.
-  Claude Code's own highlighter only comes as a `Code` element, and a `Code` element can't
-  sit inside a Button. Files are recognised by extension or name. Bash output is coloured
-  only when the command clearly printed files of one language. There is no guessing from
-  the text, because highlight.js's auto-detection rates a short `ls -la` as CSS as highly as
-  real Python. When a command printed a file and then ran other commands, all of its output
-  takes that file's language.
+  transcript keeps no timestamps. Calls made before the mod was loaded show no time, and a
+  resumed session's background jobs have no times either (`exited 0`, no `· 20s`).
+- **Thinking from before the setting has no rows.** A session's thinking is stored as the
+  API sent it, so turns taken while `showThinkingSummaries` was off stay empty. Claude Code
+  still draws its own `Thought for 4s` line above text.
+- **Highlighting needs a known language.** Inside a row's output, only highlight.js can
+  colour code. Claude Code's own highlighter only comes as a `Code` element, and a `Code`
+  element can't sit inside a Button. Files are recognised by extension or name. Bash output
+  is coloured only when the command clearly printed files of one language.
 - **Colours are fixed** to catppuccin mocha (pi's palette). They don't follow your Claude
   Code `/theme`.
-- **Long output is cut** at 200 rows in an open box. A Bash command that changed several
-  files shows them all in one box, and single files can't be folded.
+- **Long output is cut** at 200 rows in an opened call. A Bash command that changed several
+  files shows them all under one row, and single files can't be folded.
 - **Main screen mode is not supported.** Outside fullscreen there are no clicks, so groups
   can't be opened (`ctrl+o` still shows everything).
 - **The mod API can break.** Claude Code calls it early access and says it may change

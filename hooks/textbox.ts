@@ -3,7 +3,7 @@ import type { ElementTable, RenderElement } from 'claude-code'
 export type Kit = Pick<ElementTable<'terminal'>, 'Box' | 'Text' | 'Button'>
 
 /** A run of text in one colour (a theme key or a hex), or plain. */
-export type Span = { text: string; color?: string; bg?: string; dim?: boolean; bold?: boolean }
+export type Span = { text: string; color?: string; bg?: string; dim?: boolean; bold?: boolean; italic?: boolean }
 
 /** A line of a box: `left` is cut to the room `right` (kept whole) leaves it. */
 export type Row = { left: Span[]; right?: Span[] }
@@ -40,6 +40,51 @@ export const textWidth = (text: string) => {
 export const clean = (text: string) => text.replace(/\t/g, '    ').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '')
 
 /**
+ * Text wrapped to `width` cells a line: at a space where the line has one,
+ * anywhere in a run without (CJK has none). Blank lines are kept.
+ */
+export function wrapText(text: string, width: number): string[] {
+  const out: string[] = []
+  for (const paragraph of text.split('\n')) {
+    let line = ''
+    let lineWidth = 0
+    for (const char of clean(paragraph)) {
+      const w = charWidth(char.codePointAt(0) ?? 0)
+      if (lineWidth + w > width) {
+        const space = line.lastIndexOf(' ')
+        if (space > 0 && char !== ' ') {
+          out.push(line.slice(0, space))
+          line = line.slice(space + 1)
+        } else {
+          out.push(line.replace(/ +$/, ''))
+          line = ''
+        }
+        lineWidth = textWidth(line)
+        if (char === ' ' && line === '') continue
+      }
+      line += char
+      lineWidth += w
+    }
+    out.push(line)
+  }
+  return out
+}
+
+/** Text cut to `width` cells, an ellipsis where it was cut; never padded. */
+export function truncate(text: string, width: number) {
+  if (textWidth(text) <= width) return text
+  let out = ''
+  let left = width - 1
+  for (const char of text) {
+    const w = charWidth(char.codePointAt(0) ?? 0)
+    if (w > left) break
+    out += char
+    left -= w
+  }
+  return width > 0 ? out + '…' : ''
+}
+
+/**
  * Spans cut to `width` cells, an ellipsis where they were cut, padded to
  * exactly `width`; the padding takes `pad`'s background (a tinted diff row).
  */
@@ -62,8 +107,7 @@ export function fit(spans: Span[], width: number, pad: Omit<Span, 'text'> = {}):
   return [...out, { ...pad, text: '…', dim: true }, { ...pad, text: ' '.repeat(left) }]
 }
 
-/** The hover group every border button is in: it lights nothing, it only turns inversion off. */
-const BORDER_SCOPE = 'cc-tidy-border'
+export const spansWidth = (spans: Span[]) => spans.reduce((n, span) => n + textWidth(span.text), 0)
 
 const toText = (kit: Kit, span: Span) =>
   kit.Text({
@@ -71,48 +115,54 @@ const toText = (kit: Kit, span: Span) =>
     ...(span.bg === undefined ? {} : { backgroundColor: span.bg }),
     ...(span.dim === true ? { dimColor: true } : {}),
     ...(span.bold === true ? { bold: true } : {}),
+    ...(span.italic === true ? { italic: true } : {}),
     children: [span.text],
   })
 
 /**
- * A rounded box drawn as text, every row of it a button: a click anywhere on
- * the box (border included) runs `onPress`, and Claude Code never gets the
- * click (which it would take to expand the message and grey it).
+ * One line of ours, a single button: a click anywhere on it runs `onPress`,
+ * and Claude Code never gets the click (which it would take to expand the
+ * message and grey it). The spans should fill the row, so every cell is the
+ * button's.
  *
- * @param key unique per box; each row's button key derives from it
+ * A plain Button inverts under the pointer; its hover overrides come after
+ * that, so `inverse: false` keeps the line still, and `band` lays pi's
+ * `selectedBg` under the whole line instead. A hover needs a keyed Box above
+ * it in the same answer: the caller's, which `key` must be unique within.
+ */
+export function drawLine(kit: Kit, key: string, spans: Span[], onPress: () => void, band?: string): RenderElement {
+  return kit.Button({
+    key,
+    plain: true,
+    onPress,
+    hover: band === undefined ? { inverse: false } : { inverse: false, backgroundColor: band },
+    children: spans.map(span => toText(kit, span)),
+  })
+}
+
+/**
+ * A rounded box drawn as text, one button per row, border included: a click
+ * anywhere on the box runs `onPress`. Nothing lights under the pointer.
+ *
+ * @param key unique per box; it keys the Box the rows' hover needs, and each row's button
  * @param width the box's outer width in cells
  * @param border the border's colour
  * @param rows the lines inside, each cut or padded to fit
  */
 export function drawTextBox(kit: Kit, key: string, width: number, border: string, rows: Row[], onPress: () => void): RenderElement {
   const inner = Math.max(4, width - 4)
-  const button = (id: string, spans: Span[], lights: boolean) =>
-    kit.Button({
-      key: key + ':' + id,
-      plain: true,
-      onPress,
-      // A plain Button inverts under the pointer; its hover overrides come
-      // after that, so `inverse: false` keeps the border from lighting up.
-      ...(lights ? {} : { hover: { scope: BORDER_SCOPE, inverse: false } }),
-      children: spans.map(span => toText(kit, span)),
-    })
   const edge = (id: string, left: string, right: string) =>
-    button(id, [{ text: left + '─'.repeat(inner + 2) + right, color: border }], false)
+    drawLine(kit, key + ':' + id, [{ text: left + '─'.repeat(inner + 2) + right, color: border }], onPress)
   return kit.Box({
+    key,
     flexDirection: 'column',
     children: [
       edge('top', '╭', '╮'),
       ...rows.map((row, i) => {
         const right = row.right ?? []
-        const room = Math.max(1, inner - right.reduce((n, span) => n + textWidth(span.text), 0))
-        return kit.Box({
-          flexDirection: 'row',
-          children: [
-            button(i + ':l', [{ text: '│ ', color: border }], false),
-            button(i + ':c', [...fit(row.left, room), ...right], true),
-            button(i + ':r', [{ text: ' │', color: border }], false),
-          ],
-        })
+        const room = Math.max(1, inner - spansWidth(right))
+        const spans = [{ text: '│ ', color: border }, ...fit(row.left, room), ...right, { text: ' │', color: border }]
+        return drawLine(kit, key + ':' + i, spans, onPress)
       }),
       edge('bottom', '╰', '╯'),
     ],
